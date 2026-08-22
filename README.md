@@ -52,6 +52,25 @@ jobs:
 }
 ```
 
+## Notify Deploy
+
+`build-and-deploy` job 완료 후 배포자 이름을 명단에서 찾아 내부 Slack 알림 API로 배포 결과를 전송합니다. 실제 빌드/배포(env, SSH, 배포 스크립트 경로 등)는 레포마다 인프라가 달라 여기서 다루지 않고, 각 레포의 `deploy.yml`에 그대로 둡니다.
+
+### 사용하는 레포 쪽 설정
+
+```yaml
+# deploy.yml 의 notify job
+  notify:
+    needs: [build-and-deploy]
+    if: always()
+    uses: BCSDLab/.github/.github/workflows/notify-deploy.yml@v1
+    with:
+      track: frontend
+      slack-endpoint: frontend
+      status: ${{ needs.build-and-deploy.result }}
+      environment: ${{ github.ref_name == 'main' && 'Production' || 'Stage' }}
+```
+
 ### 버전
 
 호출하는 레포는 `@v1` 같은 태그로 고정합니다. 이 레포에서 동작이 바뀌면(예: input 추가/삭제 같은 breaking change) 태그를 올리고, 기존 태그를 쓰는 레포는 영향받지 않습니다.

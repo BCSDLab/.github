@@ -1,0 +1,82 @@
+name: 'Notify Deploy (reusable)'
+
+on:
+  workflow_call:
+    inputs:
+      track:
+        description: '리뷰어 명단 디렉토리 (config/<track>/reviewer.json), 배포자 이름 조회에 사용'
+        required: true
+        type: string
+      slack-endpoint:
+        description: '내부 Slack 배포 알림 API의 경로 세그먼트 (예: frontend)'
+        required: true
+        type: string
+      status:
+        description: '배포 job 의 결과 (needs.<job>.result)'
+        required: true
+        type: string
+      environment:
+        description: '표시할 배포 환경명 (예: Production, Stage)'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  notify-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout central reviewer config
+        uses: actions/checkout@v7
+        with:
+          repository: BCSDLab/.github
+          sparse-checkout: config
+          sparse-checkout-cone-mode: true
+          path: central-config
+
+      - name: Resolve actor name
+        id: resolve_actor
+        uses: actions/github-script@v9
+        with:
+          script: |
+            const fs = require('fs');
+            const path = require('path');
+
+            const configPath = path.join(
+              process.env.GITHUB_WORKSPACE,
+              'central-config',
+              'config',
+              '${{ inputs.track }}',
+              'reviewer.json',
+            );
+            const developers = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+            const matched = developers.reviewers.find((person) => person.githubName === context.actor);
+            core.setOutput('actorName', matched?.name ?? context.actor);
+
+      - name: Send Slack Notification
+        env:
+          STATUS: ${{ inputs.status }}
+          ENVIRONMENT: ${{ inputs.environment }}
+          BRANCH: ${{ github.ref_name }}
+          REPOSITORY: ${{ github.repository }}
+          ACTOR: ${{ steps.resolve_actor.outputs.actorName }}
+          # 셸에 직접 보간하면 커밋 메시지의 `$(...)` 가 러너에서 실행된다.
+          COMMIT_MSG: ${{ github.event.head_commit.message }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          COMMIT_TITLE=$(printf '%s\n' "$COMMIT_MSG" | head -n 1)
+
+          BODY=$(jq -n \
+            --arg status "$STATUS" \
+            --arg environment "$ENVIRONMENT" \
+            --arg repository "$REPOSITORY" \
+            --arg branch "$BRANCH" \
+            --arg actor "$ACTOR" \
+            --arg commitMessage "$COMMIT_TITLE" \
+            --arg runUrl "$RUN_URL" \
+            '{status: $status, environment: $environment, repository: $repository, branch: $branch, actor: $actor, commitMessage: $commitMessage, runUrl: $runUrl}')
+
+          curl -X POST "https://api-slack.internal.bcsdlab.com/api/deploy/${{ inputs.slack-endpoint }}" \
+            -H 'Content-Type: application/json' \
+            -d "$BODY"
