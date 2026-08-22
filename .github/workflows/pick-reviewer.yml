@@ -1,0 +1,104 @@
+name: 'Pick Reviewer (reusable)'
+
+on:
+  workflow_call:
+    inputs:
+      track:
+        description: '리뷰어 명단 디렉토리 (config/<track>/reviewer.json)'
+        required: true
+        type: string
+      slack-endpoint:
+        description: '내부 Slack 알림 API의 경로 세그먼트 (예: frontend)'
+        required: true
+        type: string
+      reviewer-count:
+        description: '뽑을 리뷰어 수'
+        required: false
+        type: number
+        default: 2
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  pick-reviewer:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout central reviewer config
+        uses: actions/checkout@v7
+        with:
+          repository: BCSDLab/.github
+          sparse-checkout: config
+          sparse-checkout-cone-mode: true
+          path: central-config
+
+      - name: Pick random reviewers
+        id: pick_random_reviewer
+        uses: actions/github-script@v9
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const fs = require('fs');
+            const path = require('path');
+
+            const track = '${{ inputs.track }}';
+            const reviewerCount = Number('${{ inputs.reviewer-count }}');
+
+            const configPath = path.join(
+              process.env.GITHUB_WORKSPACE,
+              'central-config',
+              'config',
+              track,
+              'reviewer.json',
+            );
+            const developers = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+
+            const prCreator = context.payload.pull_request.user.login;
+            const prCreatorEntry = developers.reviewers.find((person) => person.githubName === prCreator);
+            const candidates = developers.reviewers.filter((person) => person.githubName !== prCreator);
+
+            if (candidates.length < reviewerCount) {
+              core.setFailed(`리뷰어 후보가 ${candidates.length}명이라 ${reviewerCount}명을 뽑을 수 없다.`);
+              return;
+            }
+
+            function pickN(arr, n) {
+              const pool = [...arr];
+              const picked = [];
+              for (let i = 0; i < n; i += 1) {
+                const idx = Math.floor(Math.random() * pool.length);
+                picked.push(pool[idx]);
+                pool.splice(idx, 1);
+              }
+              return picked;
+            }
+
+            const picked = pickN(candidates, reviewerCount);
+
+            core.setOutput('writer', prCreatorEntry?.name ?? prCreator);
+            core.setOutput('pullRequestLink', context.payload.pull_request.html_url);
+            core.setOutput('reviewerGithubNames', picked.map((p) => p.githubName).join(','));
+            core.setOutput('reviewerNamesJson', JSON.stringify(picked.map((p) => p.name)));
+
+      - name: Add Reviewers
+        uses: madrapps/add-reviewers@v1
+        with:
+          reviewers: ${{ steps.pick_random_reviewer.outputs.reviewerGithubNames }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Send Slack Trigger
+        env:
+          PR_URL: ${{ steps.pick_random_reviewer.outputs.pullRequestLink }}
+          WRITER: ${{ steps.pick_random_reviewer.outputs.writer }}
+          REVIEWER_NAMES_JSON: ${{ steps.pick_random_reviewer.outputs.reviewerNamesJson }}
+        run: |
+          BODY=$(jq -n \
+            --arg pullRequestLink "$PR_URL" \
+            --arg writer "$WRITER" \
+            --argjson reviewers "$REVIEWER_NAMES_JSON" \
+            '{pullRequestLink: $pullRequestLink, writer: $writer, reviewers: $reviewers}')
+
+          curl -X POST "https://api-slack.internal.bcsdlab.com/api/review-request/${{ inputs.slack-endpoint }}" \
+            -H 'Content-Type: application/json' \
+            -d "$BODY"
