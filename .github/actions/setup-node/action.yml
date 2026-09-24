@@ -1,0 +1,20 @@
+name: 'Setup Node (frontend, reusable)'
+description: '프론트엔드 CI의 Node.js 버전을 중앙에서 관리한다. 조직 표준 버전을 올리려면 이 파일의 default만 바꾸고 태그를 옮기면 된다.'
+
+inputs:
+  node-version:
+    description: '오버라이드용. 비워두면 조직 표준 버전(24)을 쓴다.'
+    required: false
+    default: '24'
+  cache:
+    description: "actions/setup-node 의 캐시 매니저 ('yarn' | 'npm' | 'pnpm'). 비워두면 캐시를 쓰지 않는다."
+    required: false
+    default: ''
+
+runs:
+  using: 'composite'
+  steps:
+    - uses: actions/setup-node@v7
+      with:
+        node-version: ${{ inputs.node-version }}
+        cache: ${{ inputs.cache }}
