@@ -58,9 +58,14 @@ jobs:
             const prCreatorEntry = developers.reviewers.find((person) => person.githubName === prCreator);
             const candidates = developers.reviewers.filter((person) => person.githubName !== prCreator);
 
-            if (candidates.length < reviewerCount) {
-              core.setFailed(`리뷰어 후보가 ${candidates.length}명이라 ${reviewerCount}명을 뽑을 수 없다.`);
+            if (candidates.length === 0) {
+              core.setFailed('리뷰어 후보가 없어 리뷰어를 지정할 수 없다.');
               return;
+            }
+
+            const pickCount = Math.min(reviewerCount, candidates.length);
+            if (pickCount < reviewerCount) {
+              core.info(`리뷰어 후보가 ${candidates.length}명이라 ${pickCount}명만 지정한다.`);
             }
 
             function pickN(arr, n) {
@@ -74,7 +79,7 @@ jobs:
               return picked;
             }
 
-            const picked = pickN(candidates, reviewerCount);
+            const picked = pickN(candidates, pickCount);
 
             core.setOutput('writer', prCreatorEntry?.name ?? prCreator);
             core.setOutput('pullRequestLink', context.payload.pull_request.html_url);
